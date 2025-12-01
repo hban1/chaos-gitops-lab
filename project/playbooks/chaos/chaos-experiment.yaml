@@ -1,106 +1,184 @@
 ---
 # ─────────────────────────────────────────────
-# chaos-experiment.yaml — 쇼핑몰 통합 카오스 테스트
+# chaos-experiment.yaml — 쇼핑몰 통합 카오스 테스트 (레벨 전체 자동 실행)
 # ─────────────────────────────────────────────
-- name: 💣 Unified Chaos Engineering Experiment for App + DB
+- name: 💣 Unified Chaos Engineering Experiment for App + DB (All Levels)
   hosts: k3s_master
   become: yes
+
   vars:
-    chaos_duration: 60                # 테스트 지속 시간 (초)
-    cpu_load: 90                      # CPU 부하율 (%)
-    network_delay_ms: 1000            # 네트워크 지연 시간 (ms)
-    target_namespace: "default"       # 타겟 네임스페이스
+    target_namespace: "default"
+
+    # 🔥 Chaos 주입률 구간별 설정 (네가 만든 표를 코드화한 부분)
+    chaos_levels:
+      # 0~60%: 정상 부하 구간
+      - id: normal
+        label: "0~60% (정상 부하)"
+        inject_band: "0~60%"
+        cpu_load: 40              # 비교적 낮은 부하
+        chaos_duration: 30        # 30초
+        network_delay_ms: 200     # 200ms 정도 경미한 지연
+        mttr_target: "10~30초"
+        note: "기본 감지 루프 및 self-healing 확인"
+
+      # 61~80%: Warning Zone
+      - id: warning
+        label: "61~80% (Warning Zone)"
+        inject_band: "61~80%"
+        cpu_load: 70
+        chaos_duration: 45
+        network_delay_ms: 500
+        mttr_target: "30~45초"
+        note: "알람 + 자동 복구 완전 작동 구간"
+
+      # 81~90%: 한계 부하 구간 (표에서 ‘판매/검증용 최적’)
+      - id: critical_threshold
+        label: "81~90% (Critical Threshold)"
+        inject_band: "81~90%"
+        cpu_load: 90
+        chaos_duration: 60
+        network_delay_ms: 1000
+        mttr_target: "45~60초"
+        note: "데모/시연용 최적 한계 부하"
+
+      # 91~95%: 불안정 구간
+      - id: degraded
+        label: "91~95% (Degraded Mode)"
+        inject_band: "91~95%"
+        cpu_load: 95
+        chaos_duration: 90
+        network_delay_ms: 1200
+        mttr_target: "60~90초"
+        note: "복구 지연, 알람 반복 구간"
+
+      # 96~99%: 임계 포화
+      - id: critical
+        label: "96~99% (Critical Mode)"
+        inject_band: "96~99%"
+        cpu_load: 99
+        chaos_duration: 120
+        network_delay_ms: 1500
+        mttr_target: "90~150초"
+        note: "일부 복구 실패, 데이터 손상 가능 구간"
+
+      # 100%↑: 완전 포화 / Failure Zone
+      - id: failure
+        label: "100%↑ (Failure Zone)"
+        inject_band: "100%↑"
+        cpu_load: 99
+        chaos_duration: 300       # 5분 정도 강제 포화
+        network_delay_ms: 2000
+        mttr_target: "5~8분"
+        note: "자동복구 붕괴, 수동 개입 필수"
 
   tasks:
-  # ────────────────────────────────
-  # 🧩 APP / REDIS Layer
-  # ────────────────────────────────
-  - name: 💀 1. cartservice Pod Kill
-    include_role:
-      name: chaos_kill
-    vars:
-      target_pod: "cartservice"
-      namespace: "{{ target_namespace }}"
-    tags: [cartservice, kill]
+    # chaos_levels 리스트를 돌면서, 각 레벨별로 네가 이미 만든 시나리오를 실행
+    - name: "🚀 Chaos Level 실행: {{ level.label }}"
+      block:
+        - name: "📌 레벨 메타 정보 출력 ({{ level.inject_band }})"
+          debug:
+            msg: |
+              ▶ Chaos Level: {{ level.label }}
+              - 주입률 구간: {{ level.inject_band }}
+              - CPU 부하: {{ level.cpu_load }}%
+              - Chaos Duration: {{ level.chaos_duration }}초
+              - Network Delay: {{ level.network_delay_ms }}ms
+              - 목표 MTTR: {{ level.mttr_target }}
+              - 비고: {{ level.note }}
 
-  - name: 🌐 2. redis-cart Network Latency
-    include_role:
-      name: chaos_network
-    vars:
-      target_pod: "redis-cart"
-      delay_ms: "{{ network_delay_ms }}"
-      duration: "{{ chaos_duration }}"
-      namespace: "{{ target_namespace }}"
-    tags: [redis, network]
+        # ────────────────────────────────
+        # 🧩 APP / REDIS Layer
+        # ────────────────────────────────
+        - name: 💀 1. cartservice Pod Kill ({{ level.label }})
+          include_role:
+            name: chaos_kill
+          vars:
+            target_pod: "cartservice"
+            namespace: "{{ target_namespace }}"
+          tags: [cartservice, kill]
 
-  - name: 💀 3. paymentservice Kill
-    include_role:
-      name: chaos_kill
-    vars:
-      target_pod: "paymentservice"
-      namespace: "{{ target_namespace }}"
-    tags: [payment, kill]
+        - name: 🌐 2. redis-cart Network Latency ({{ level.label }})
+          include_role:
+            name: chaos_network
+          vars:
+            target_pod: "redis-cart"
+            delay_ms: "{{ level.network_delay_ms }}"
+            duration: "{{ level.chaos_duration }}"
+            namespace: "{{ target_namespace }}"
+          tags: [redis, network]
 
-  - name: 🔥 4. checkoutservice CPU Stress
-    include_role:
-      name: chaos_cpu
-    vars:
-      target_pod: "checkoutservice"
-      cpu_load: "{{ cpu_load }}"
-      duration: "{{ chaos_duration }}"
-      namespace: "{{ target_namespace }}"
-    tags: [checkout, cpu]
+        - name: 💀 3. paymentservice Kill ({{ level.label }})
+          include_role:
+            name: chaos_kill
+          vars:
+            target_pod: "paymentservice"
+            namespace: "{{ target_namespace }}"
+          tags: [payment, kill]
 
-  # ────────────────────────────────
-  # 🧩 RDB / ORDER-HISTORY Layer
-  # ────────────────────────────────
-  - name: 💀 5. orders-db Pod Kill
-    include_role:
-      name: chaos_kill
-    vars:
-      target_pod: "orders-db"
-      namespace: "{{ target_namespace }}"
-    tags: [ordersdb, kill]
+        - name: 🔥 4. checkoutservice CPU Stress ({{ level.label }})
+          include_role:
+            name: chaos_cpu
+          vars:
+            target_pod: "checkoutservice"
+            cpu_load: "{{ level.cpu_load }}"
+            duration: "{{ level.chaos_duration }}"
+            namespace: "{{ target_namespace }}"
+          tags: [checkout, cpu]
 
-  - name: 🌐 6. orders-db Network Isolation
-    include_role:
-      name: chaos_network
-    vars:
-      target_pod: "orders-db"
-      delay_ms: 0                     # 완전 차단 (0으로 설정)
-      duration: "{{ chaos_duration }}"
-      drop_mode: true                 # tc/qdisc drop 모드 활성화
-      namespace: "{{ target_namespace }}"
-    tags: [ordersdb, network, isolation]
+        # ────────────────────────────────
+        # 🧩 RDB / ORDER-HISTORY Layer
+        # ────────────────────────────────
+        - name: 💀 5. orders-db Pod Kill ({{ level.label }})
+          include_role:
+            name: chaos_kill
+          vars:
+            target_pod: "orders-db"
+            namespace: "{{ target_namespace }}"
+          tags: [ordersdb, kill]
 
-  - name: 🌐 7. orders-db Network Latency
-    include_role:
-      name: chaos_network
-    vars:
-      target_pod: "orders-db"
-      delay_ms: "{{ network_delay_ms }}"
-      duration: "{{ chaos_duration }}"
-      namespace: "{{ target_namespace }}"
-    tags: [ordersdb, latency]
+        - name: 🌐 6. orders-db Network Isolation ({{ level.label }})
+          include_role:
+            name: chaos_network
+          vars:
+            target_pod: "orders-db"
+            delay_ms: 0                     # 완전 차단
+            duration: "{{ level.chaos_duration }}"
+            drop_mode: true                 # tc/qdisc drop 모드
+            namespace: "{{ target_namespace }}"
+          tags: [ordersdb, network, isolation]
 
-  - name: ⚙️ 8. orders-db Connection Pool Exhaustion (config stress)
-    shell: |
-      POD=$(kubectl get pod -n {{ target_namespace }} -l app=orders-db -o name | head -n 1)
-      kubectl exec -n {{ target_namespace }} $POD -- psql -U postgres -d orderdb -c "ALTER SYSTEM SET max_connections = 5;"
-      kubectl rollout restart statefulset orders-db -n {{ target_namespace }}
-    ignore_errors: yes
-    tags: [ordersdb, config]
+        - name: 🌐 7. orders-db Network Latency ({{ level.label }})
+          include_role:
+            name: chaos_network
+          vars:
+            target_pod: "orders-db"
+            delay_ms: "{{ level.network_delay_ms }}"
+            duration: "{{ level.chaos_duration }}"
+            namespace: "{{ target_namespace }}"
+          tags: [ordersdb, latency]
 
-  - name: ✅ Chaos test completed summary
-    debug:
-      msg: |
-        ✅ Chaos experiments finished.
-        ─────────────────────────────
-        - cartservice       → Pod Kill
-        - redis-cart        → Network Delay
-        - paymentservice    → Pod Kill
-        - checkoutservice   → CPU Stress
-        - orders-db         → Pod Kill + Network + Config
-        Duration: {{ chaos_duration }}s
-        Namespace: {{ target_namespace }}
+        - name: ⚙️ 8. orders-db Connection Pool Exhaustion ({{ level.label }})
+          shell: |
+            POD=$(kubectl get pod -n {{ target_namespace }} -l app=orders-db -o name | head -n 1)
+            kubectl exec -n {{ target_namespace }} $POD -- psql -U postgres -d orderdb -c "ALTER SYSTEM SET max_connections = 5;"
+            kubectl rollout restart statefulset orders-db -n {{ target_namespace }}
+          ignore_errors: yes
+          tags: [ordersdb, config]
 
+        - name: ✅ Chaos Level {{ level.label }} 완료 요약
+          debug:
+            msg: |
+              ✅ Chaos Level 완료: {{ level.label }}
+              ─────────────────────────────
+              - cartservice       → Pod Kill
+              - redis-cart        → Network Delay ({{ level.network_delay_ms }}ms)
+              - paymentservice    → Pod Kill
+              - checkoutservice   → CPU {{ level.cpu_load }}% / {{ level.chaos_duration }}s
+              - orders-db         → Pod Kill + Network + Config
+              - 목표 MTTR         → {{ level.mttr_target }}
+              - 주입률 구간       → {{ level.inject_band }}
+
+      loop: "{{ chaos_levels }}"
+      loop_control:
+        loop_var: level
+        label: "{{ level.label }}"
