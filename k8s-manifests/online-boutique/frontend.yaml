@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: online-boutique
+  labels:
+    app: frontend
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: online-boutique-chaos-lab
+    app.kubernetes.io/tier: frontend
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        app.kubernetes.io/name: frontend
+        app.kubernetes.io/part-of: online-boutique-chaos-lab
+        app.kubernetes.io/tier: frontend
+        app.kubernetes.io/component: frontend
+    spec:
+      containers:
+        - name: server
+          # ⚠️ 아래 [본인아이디] 부분 수정 필수! 
+          # (초기값은 중요하지 않지만, CI 스크립트가 'online-boutique-frontend' 라는 글자를 찾아서 바꿔치기합니다.)
+          image: ghcr.io/hban1/online-boutique-frontend:initial
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            # 원래는 백엔드 주소들이 필요한데, 지금은 배포 테스트용이라 생략해도 뜹니다.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: online-boutique
+  labels:
+    app: frontend
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: online-boutique-chaos-lab
+    app.kubernetes.io/tier: frontend
+    app.kubernetes.io/component: frontend
+spec:
+  type: NodePort  # 로컬 접속을 위해 NodePort 사용
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      nodePort: 30080 # 접속하기 쉽게 30080으로 고정해둠
